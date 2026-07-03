@@ -20,6 +20,7 @@ IPv6 в этой версии пропускается без фильтраци
 - [Smart mode](#smart-mode)
 - [Прямой per-IP лимит](#прямой-per-ip-лимит)
 - [Логи](#логи)
+- [Проверка состояния и диагностика](#проверка-состояния-и-диагностика)
 - [Dry-run](#dry-run)
 - [Остановка и удаление с интерфейса](#остановка-и-удаление-с-интерфейса)
 - [Сборка из исходников](#сборка-из-исходников)
@@ -131,7 +132,17 @@ sudo nano /etc/xdp-rate-limit/config.json
 }
 ```
 
-Применить изменения (демон также перечитывает файл на лету при изменении `mtime`):
+Перед применением проверьте, что JSON валиден — иначе демон оставит старый конфиг
+и залогирует `tick failed`:
+
+```bash
+python3 -m json.tool /etc/xdp-rate-limit/config.json >/dev/null && echo "JSON OK"
+```
+
+Демон перечитывает файл **на лету** при изменении `mtime` — рестарт не нужен,
+новые значения применяются в течение `interval_seconds` (в логе появится строка
+`Config loaded: ...`). Whitelist тоже синхронизируется автоматически. Принудительно
+перезапустить, если нужно:
 
 ```bash
 sudo systemctl restart xdp-rate-limit@eth0
@@ -266,6 +277,55 @@ BAN 1.2.3.4 for 300s: 3.214 Mbps, 4200 pps, reason=smart-global
 iface=eth0 global=7.531Mbps/12000pps smart_exceeded=True active_bans=2 top=[1.2.3.4=3.21Mbps/4200pps]
 ```
 
+## Проверка состояния и диагностика
+
+Состояние сервиса. Следите, чтобы `NRestarts` **не рос** — рост означает петлю
+перезапусков (сервис падает и systemd поднимает его снова):
+
+```bash
+systemctl status xdp-rate-limit@eth0
+systemctl show -p NRestarts -p ActiveState xdp-rate-limit@eth0
+```
+
+Что реально прикреплено к интерфейсу (должна висеть одна XDP-программа `xdp`):
+
+```bash
+sudo bpftool net show dev eth0
+ip -d link show eth0 | grep -i xdp
+```
+
+Живой лог с банами и периодической сводкой:
+
+```bash
+journalctl -u xdp-rate-limit@eth0 -f
+```
+
+Активные баны и размер скана демона (число source-IP в статистике):
+
+```bash
+# текущий чёрный список
+sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/blacklist_map
+# сколько записей в статистике по source IP
+sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/stats_map | grep -c '"key"'
+```
+
+Сколько CPU ест сам демон прямо сейчас:
+
+```bash
+PID=$(systemctl show -p MainPID --value xdp-rate-limit@eth0)
+top -b -n2 -d1 -p "$PID" | tail -5
+```
+
+Если сервис застрял в петле перезапусков или на интерфейсе осталась осиротевшая
+XDP-программа — сбросьте счётчик и перезапустите. `load` самовосстанавливающийся:
+при старте он снимает свой оставшийся экземпляр и цепляется заново, так что обычно
+достаточно:
+
+```bash
+sudo systemctl reset-failed xdp-rate-limit@eth0
+sudo systemctl restart xdp-rate-limit@eth0
+```
+
 ## Dry-run
 
 Для проверки без реального бана:
@@ -296,6 +356,14 @@ sudo systemctl disable xdp-rate-limit@eth0
 
 ```bash
 sudo /usr/local/sbin/xdp-rate-loader unload eth0 /sys/fs/bpf/xdp-rate-limit/eth0
+```
+
+`unload` снимает только **свою** программу (по имени `xdp_rate_limiter`), в том
+числе осиротевшую после потери пинов. Чужую XDP-программу он не трогает — чтобы
+снять её принудительно, добавьте `--force` (или `XDP_FORCE=1` в окружении):
+
+```bash
+sudo /usr/local/sbin/xdp-rate-loader unload eth0 /sys/fs/bpf/xdp-rate-limit/eth0 --force
 ```
 
 ## Сборка из исходников

@@ -20,6 +20,7 @@ IPv6 is passed through without filtering in this version — see
 - [Smart mode](#smart-mode)
 - [Direct per-IP limit](#direct-per-ip-limit)
 - [Logs](#logs)
+- [Status & diagnostics](#status--diagnostics)
 - [Dry-run](#dry-run)
 - [Stop & uninstall from an interface](#stop--uninstall-from-an-interface)
 - [Build from source](#build-from-source)
@@ -132,7 +133,16 @@ Milder profile — global threshold 10 Mbps, ban IPs from 5 Mbps:
 }
 ```
 
-Apply changes (the daemon also hot-reloads the file on `mtime` change):
+Before applying, check that the JSON is valid — otherwise the daemon keeps the
+old config and logs `tick failed`:
+
+```bash
+python3 -m json.tool /etc/xdp-rate-limit/config.json >/dev/null && echo "JSON OK"
+```
+
+The daemon **hot-reloads** the file on `mtime` change — no restart needed, new
+values apply within `interval_seconds` (a `Config loaded: ...` line appears in the
+log). The whitelist is re-synced automatically too. Force a restart if you want:
 
 ```bash
 sudo systemctl restart xdp-rate-limit@eth0
@@ -265,6 +275,54 @@ Periodic summary:
 iface=eth0 global=7.531Mbps/12000pps smart_exceeded=True active_bans=2 top=[1.2.3.4=3.21Mbps/4200pps]
 ```
 
+## Status & diagnostics
+
+Service state. Watch that `NRestarts` **does not grow** — a rising counter means a
+restart loop (the service crashes and systemd brings it back up):
+
+```bash
+systemctl status xdp-rate-limit@eth0
+systemctl show -p NRestarts -p ActiveState xdp-rate-limit@eth0
+```
+
+What is actually attached to the interface (there should be a single `xdp` program):
+
+```bash
+sudo bpftool net show dev eth0
+ip -d link show eth0 | grep -i xdp
+```
+
+Live log with bans and the periodic summary:
+
+```bash
+journalctl -u xdp-rate-limit@eth0 -f
+```
+
+Active bans and the daemon's scan size (number of source IPs in the stats map):
+
+```bash
+# current blacklist
+sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/blacklist_map
+# how many entries in the per-source stats
+sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/stats_map | grep -c '"key"'
+```
+
+How much CPU the daemon itself uses right now:
+
+```bash
+PID=$(systemctl show -p MainPID --value xdp-rate-limit@eth0)
+top -b -n2 -d1 -p "$PID" | tail -5
+```
+
+If the service is stuck in a restart loop or an orphaned XDP program is left on the
+interface, reset the counter and restart. `load` is self-healing: on start it
+detaches its own leftover instance and re-attaches, so usually this is enough:
+
+```bash
+sudo systemctl reset-failed xdp-rate-limit@eth0
+sudo systemctl restart xdp-rate-limit@eth0
+```
+
 ## Dry-run
 
 To test without banning for real:
@@ -295,6 +353,15 @@ Force-detach XDP if needed:
 
 ```bash
 sudo /usr/local/sbin/xdp-rate-loader unload eth0 /sys/fs/bpf/xdp-rate-limit/eth0
+```
+
+`unload` only removes **its own** program (matched by the name `xdp_rate_limiter`),
+including an orphan left behind after its pins were lost. It never touches a foreign
+XDP program — to remove one anyway, add `--force` (or `XDP_FORCE=1` in the
+environment):
+
+```bash
+sudo /usr/local/sbin/xdp-rate-loader unload eth0 /sys/fs/bpf/xdp-rate-limit/eth0 --force
 ```
 
 ## Build from source
