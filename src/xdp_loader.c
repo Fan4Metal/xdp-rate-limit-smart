@@ -22,6 +22,11 @@
 #define PATH_MAX 4096
 #endif
 
+// The BPF program's function name, as it appears in bpf_prog_info.name (kernel
+// truncates to BPF_OBJ_NAME_LEN-1). Used to recognize *our own* attached program
+// so we can safely replace/remove it without touching foreign XDP programs.
+#define XDP_PROG_NAME "xdp_rate_limiter"
+
 static int mkdir_p(const char *path)
 {
     char tmp[PATH_MAX];
@@ -135,14 +140,66 @@ static int get_prog_id_from_fd(int fd, __u32 *id)
     return 0;
 }
 
-static int detach_if_ours(int ifindex, const char *pin_dir)
+// Is the program with this id one of ours? Matched by name so we never disturb
+// a foreign XDP program that happens to be attached.
+static bool prog_id_is_ours(__u32 id)
+{
+    int fd = bpf_prog_get_fd_by_id(id);
+    if (fd < 0)
+        return false;
+    struct bpf_prog_info info = {};
+    __u32 len = sizeof(info);
+    int ret = bpf_obj_get_info_by_fd(fd, &info, &len);
+    close(fd);
+    if (ret)
+        return false;
+    // Kernel stores at most BPF_OBJ_NAME_LEN-1 chars; compare that many.
+    return strncmp(info.name, XDP_PROG_NAME, BPF_OBJ_NAME_LEN - 1) == 0;
+}
+
+// Detach any XDP program currently attached to ifindex (native or generic) that
+// is ours. With force=true, detach whatever is attached regardless of name.
+// Returns the number of programs detached.
+static int detach_attached(int ifindex, bool force)
+{
+    int modes[] = { XDP_FLAGS_DRV_MODE, XDP_FLAGS_SKB_MODE };
+    int detached = 0;
+    for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        __u32 id = 0;
+        if (bpf_xdp_query_id(ifindex, modes[i], &id) != 0 || id == 0)
+            continue;
+        if (!force && !prog_id_is_ours(id)) {
+            fprintf(stderr,
+                    "Refusing to remove foreign %s XDP program (id %u) on ifindex %d; "
+                    "detach it manually or pass --force / XDP_FORCE=1.\n",
+                    mode_name_from_flag(modes[i]), id, ifindex);
+            continue;
+        }
+        int ret = bpf_xdp_detach(ifindex, modes[i], NULL);
+        if (ret == 0) {
+            printf("Detached %s XDP program (id %u) from ifindex %d.\n",
+                   mode_name_from_flag(modes[i]), id, ifindex);
+            detached++;
+        } else {
+            fprintf(stderr, "Failed to detach %s XDP (id %u): %s\n",
+                    mode_name_from_flag(modes[i]), id, strerror(-ret));
+        }
+    }
+    return detached;
+}
+
+static int detach_if_ours(int ifindex, const char *pin_dir, bool force)
 {
     char prog_path[PATH_MAX];
     snprintf(prog_path, sizeof(prog_path), "%s/xdp_rate_limiter", pin_dir);
 
     int prog_fd = bpf_obj_get(prog_path);
     if (prog_fd < 0) {
-        fprintf(stderr, "No pinned program at %s; not detaching unknown XDP program.\n", prog_path);
+        // Pin is gone (e.g. crash or an earlier partial cleanup). Fall back to
+        // name-based detach so an orphaned instance of our own program still
+        // gets removed instead of wedging the interface.
+        fprintf(stderr, "No pinned program at %s; falling back to name-based detach.\n", prog_path);
+        detach_attached(ifindex, force);
         rm_rf(pin_dir);
         return 0;
     }
@@ -218,6 +275,13 @@ static int load_prog(const char *iface, const char *obj_path, const char *pin_di
         return 1;
     }
 
+    // Make load idempotent: if our own program is already attached (e.g. after
+    // an unclean stop that left it behind), remove it first so the fresh attach
+    // below succeeds instead of failing with EBUSY. Foreign programs are left
+    // alone unless XDP_FORCE=1 is set.
+    bool force = getenv("XDP_FORCE") != NULL;
+    detach_attached(ifindex, force);
+
     int attach_flags_to_try[2];
     int attach_count = 0;
     if (!strcmp(mode, "auto")) {
@@ -286,7 +350,11 @@ static void usage(const char *argv0)
     fprintf(stderr,
             "Usage:\n"
             "  %s load IFACE OBJ_PATH PIN_DIR [auto|native|generic]\n"
-            "  %s unload IFACE PIN_DIR\n", argv0, argv0);
+            "  %s unload IFACE PIN_DIR [--force]\n"
+            "\n"
+            "  XDP_FORCE=1 in the environment forces removal of a foreign XDP\n"
+            "  program during load/unload (default: only our own is touched).\n",
+            argv0, argv0);
 }
 
 int main(int argc, char **argv)
@@ -308,16 +376,24 @@ int main(int argc, char **argv)
     }
 
     if (!strcmp(argv[1], "unload")) {
-        if (argc != 4) {
+        if (argc < 4 || argc > 5) {
             usage(argv[0]);
             return 1;
+        }
+        bool force = getenv("XDP_FORCE") != NULL;
+        if (argc == 5) {
+            if (strcmp(argv[4], "--force")) {
+                usage(argv[0]);
+                return 1;
+            }
+            force = true;
         }
         int ifindex = if_nametoindex(argv[2]);
         if (!ifindex) {
             fprintf(stderr, "Unknown interface: %s\n", argv[2]);
             return 1;
         }
-        return detach_if_ours(ifindex, argv[3]);
+        return detach_if_ours(ifindex, argv[3], force);
     }
 
     usage(argv[0]);
