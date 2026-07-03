@@ -10,6 +10,13 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+// linux/if_vlan.h keeps struct vlan_hdr behind __KERNEL__, so it is not visible
+// to BPF programs. Define it locally to match the on-wire 802.1Q tag layout.
+struct vlan_hdr {
+    __be16 h_vlan_TCI;
+    __be16 h_vlan_encapsulated_proto;
+};
+
 struct traffic_stats {
     __u64 bytes;
     __u64 packets;
