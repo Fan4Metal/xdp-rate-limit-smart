@@ -1,0 +1,26 @@
+{
+  "interval_seconds": 1.0,
+
+  "smart_global_enabled": true,
+  "global_mbps_limit": 10.0,
+  "global_pps_limit": 0,
+
+  "smart_ban_min_mbps": 3.0,
+  "smart_ban_min_pps": 0,
+
+  "per_ip_mbps_limit": 0,
+  "per_ip_pps_limit": 0,
+
+  "ban_seconds": 300,
+  "extend_ban_on_repeat": true,
+  "max_bans_per_tick": 50,
+  "max_scan_entries": 262144,
+  "log_top_n": 10,
+  "summary_log_interval_seconds": 10,
+
+  "whitelist": [
+    "127.0.0.1"
+  ],
+
+  "dry_run": false
+}

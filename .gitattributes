@@ -1,0 +1,5 @@
+# This project targets Linux; keep LF so shell scripts, the systemd unit and
+# C/BPF sources are never checked out with CRLF (which would break them).
+* text=auto eol=lf
+*.png binary
+*.o binary

@@ -1,0 +1,29 @@
+[Unit]
+Description=Smart XDP rate limiter on %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=XDP_MODE=auto
+ExecStart=/usr/local/sbin/xdp-rate-limit-wrapper %i start
+ExecStop=/bin/kill -TERM $MAINPID
+ExecStopPost=/usr/local/sbin/xdp-rate-limit-wrapper %i stop
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+
+# Modest hardening. These do NOT interfere with loading/attaching XDP,
+# pinning to bpffs, or mounting /sys/fs/bpf. Tighten further (ProtectSystem,
+# CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_SYS_ADMIN, ...) once verified
+# on your kernel — some directives can block BPF or the bpffs mount.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelModules=yes
+
+[Install]
+WantedBy=multi-user.target
