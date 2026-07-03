@@ -94,23 +94,6 @@ static int write_text(const char *path, const char *text)
     return 0;
 }
 
-static int read_text(const char *path, char *buf, size_t buflen)
-{
-    int fd = open(path, O_RDONLY);
-    if (fd < 0)
-        return -errno;
-    ssize_t n = read(fd, buf, buflen - 1);
-    int err = errno;
-    close(fd);
-    if (n < 0)
-        return -err;
-    buf[n] = 0;
-    char *nl = strchr(buf, '\n');
-    if (nl)
-        *nl = 0;
-    return 0;
-}
-
 static int mode_flag_from_name(const char *mode)
 {
     if (!strcmp(mode, "native"))
@@ -312,6 +295,18 @@ static int load_prog(const char *iface, const char *obj_path, const char *pin_di
         fprintf(stderr, "Unable to attach XDP program. Existing XDP program may already be attached.\n");
         bpf_object__close(obj);
         rm_rf(pin_dir);
+        return 1;
+    }
+
+    // Our program is attached; now pin into a clean directory. A previous load
+    // may have left stale map/program pins here (idempotent restart), which
+    // would make bpf_object__pin_maps fail with EEXIST. Wipe and recreate.
+    rm_rf(pin_dir);
+    ret = mkdir_p(pin_dir);
+    if (ret < 0) {
+        fprintf(stderr, "mkdir %s failed: %s\n", pin_dir, strerror(-ret));
+        bpf_xdp_detach(ifindex, attached_flag, NULL);
+        bpf_object__close(obj);
         return 1;
     }
 
