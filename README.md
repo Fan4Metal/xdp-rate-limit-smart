@@ -28,6 +28,7 @@ IPv6 is passed through without filtering in this version — see
 - [Important notes](#important-notes)
 - [Limitations & threat model](#limitations--threat-model)
 - [Accounting of banned traffic](#accounting-of-banned-traffic)
+- [Further reading](#further-reading)
 
 ## Features
 
@@ -465,3 +466,20 @@ and do not keep the smart mode triggered by themselves.
 
 The whitelist is still checked first, so whitelisted admin addresses bypass both
 the blacklist and accounting.
+
+## Further reading
+
+Background on the XDP and eBPF technology this project is built on:
+
+- [What is eBPF?](https://ebpf.io/what-is-ebpf/) — a concise introduction to eBPF
+  and where XDP fits in.
+- [XDP hands-on tutorial](https://github.com/xdp-project/xdp-tutorial) — the
+  xdp-project tutorial: writing, loading, and inspecting XDP programs step by step.
+- [Cilium BPF and XDP Reference Guide](https://docs.cilium.io/en/stable/reference-guides/bpf/)
+  — the most thorough single reference on BPF maps, program types, and XDP internals.
+- [Kernel AF_XDP / XDP networking docs](https://www.kernel.org/doc/html/latest/networking/af_xdp.html)
+  — the upstream kernel documentation.
+- [`bpf(2)` man page](https://man7.org/linux/man-pages/man2/bpf.2.html) — the raw
+  syscall this project's daemon calls directly (see [How it works](#how-it-works)).
+- [libbpf](https://github.com/libbpf/libbpf) — the loader library used by
+  [`src/xdp_loader.c`](src/xdp_loader.c).
