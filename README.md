@@ -118,8 +118,11 @@ systemctl status xdp-rate-limit@eth0
 sudo journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
 ```
 
-The restart re-attaches XDP and reloads the still-active bans, so it is safe to run
-on a live server. If you changed only the Python daemon and want to skip the
+The restart cleanly detaches and re-attaches XDP, so it is safe to run on a live
+server. It does clear the active bans — the pinned maps are removed on stop and
+recreated empty on start — but this is harmless: any source still over the limit is
+re-banned within a tick or two (bans are temporary anyway, and `/sys/fs/bpf` does
+not survive a reboot). If you changed only the Python daemon and want to skip the
 recompile, you can reinstall just that file instead of the full installer:
 
 ```bash

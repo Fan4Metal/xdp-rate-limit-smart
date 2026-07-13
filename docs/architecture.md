@@ -186,7 +186,10 @@ Startup (`XdpRateDaemon.__init__`):
 2. `reload_config(force=True)` — load `config.json` and push the whitelist into
    `whitelist_lpm_map`.
 3. `load_existing_bans()` — read `blacklist_map`, drop already-expired entries,
-   and remember the rest so restarts don't lose or duplicate bans.
+   and remember the rest. This recovers bans after an *unclean* stop where the
+   pinned maps survived (crash, `SIGKILL`); a clean stop/restart wipes the pins
+   first (see [systemd wiring](#systemd-wiring)), so there is usually nothing to
+   recover — the read simply returns an empty map.
 
 Then `run()` loops: `tick()` every `interval_seconds`, catching and logging any
 exception as `tick failed` (so a transient error never kills the daemon).
@@ -322,8 +325,15 @@ service instance to one interface via the `%i` specifier
 - `ExecStopPost … %i stop` — run the loader `unload` to detach XDP and remove the
   pins after the daemon exits.
 
-`Restart=on-failure` brings the daemon back after a crash; because both `load` and
-the daemon's ban-loading are idempotent and self-healing, a restart cleanly
-re-attaches and picks up the still-active bans rather than piling up duplicate XDP
-programs. A steadily climbing `NRestarts` is the signal to investigate a genuine
-restart loop.
+`Restart=on-failure` brings the daemon back after a crash; because `load` is
+idempotent and self-healing, a restart cleanly re-attaches rather than piling up
+duplicate XDP programs. A steadily climbing `NRestarts` is the signal to
+investigate a genuine restart loop.
+
+Note what a restart does to bans. On a **clean** stop/restart `ExecStopPost` runs
+`unload`, which removes the pin directory and with it `blacklist_map`; `ExecStart`
+then recreates the maps empty, so the active bans are cleared. This is intended and
+harmless — bans are temporary, and any source still over the limit is re-banned
+within a tick or two. `load_existing_bans()` only recovers bans after an **unclean**
+stop where `ExecStopPost` did not run and the pins survived (crash, `SIGKILL`).
+Either way `/sys/fs/bpf` is a tmpfs, so no bans survive a reboot.
