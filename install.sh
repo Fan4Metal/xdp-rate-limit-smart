@@ -83,6 +83,6 @@ systemctl enable --now "xdp-rate-limit@${IFACE}.service"
 echo
 echo "Installed and started: xdp-rate-limit@${IFACE}.service"
 echo "Config: /etc/xdp-rate-limit/config.json"
-echo "Logs: journalctl -u xdp-rate-limit@${IFACE} -f"
+echo "Logs: sudo journalctl -u xdp-rate-limit@${IFACE} -f"
 echo
 echo "IMPORTANT: make sure your admin/SSH IP is in whitelist before lowering limits."

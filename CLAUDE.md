@@ -31,7 +31,7 @@ that runs cross-platform; use it after editing the daemon.
 
 Runtime inspection on a deployed host:
 ```bash
-journalctl -u xdp-rate-limit@eth0 -f
+sudo journalctl -u xdp-rate-limit@eth0 -f
 sudo bpftool net show dev eth0
 sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/blacklist_map
 ```

@@ -114,7 +114,7 @@ sudo systemctl restart xdp-rate-limit@eth0
 
 ```bash
 systemctl status xdp-rate-limit@eth0
-journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
+sudo journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
 ```
 
 Перезапуск заново присоединяет XDP и подхватывает всё ещё активные баны, так что
@@ -305,7 +305,7 @@ smart_ban_min_mbps = 2
 ## Логи
 
 ```bash
-journalctl -u xdp-rate-limit@eth0 -f
+sudo journalctl -u xdp-rate-limit@eth0 -f
 ```
 
 Пример бана:
@@ -340,7 +340,7 @@ ip -d link show eth0 | grep -i xdp
 Живой лог с банами и периодической сводкой:
 
 ```bash
-journalctl -u xdp-rate-limit@eth0 -f
+sudo journalctl -u xdp-rate-limit@eth0 -f
 ```
 
 Активные баны и размер скана демона (число source-IP в статистике):

@@ -115,7 +115,7 @@ climbing (see [Status & diagnostics](#status--diagnostics)):
 
 ```bash
 systemctl status xdp-rate-limit@eth0
-journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
+sudo journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
 ```
 
 The restart re-attaches XDP and reloads the still-active bans, so it is safe to run
@@ -302,7 +302,7 @@ Any IP above 5 Mbps is then banned immediately.
 ## Logs
 
 ```bash
-journalctl -u xdp-rate-limit@eth0 -f
+sudo journalctl -u xdp-rate-limit@eth0 -f
 ```
 
 Ban example:
@@ -337,7 +337,7 @@ ip -d link show eth0 | grep -i xdp
 Live log with bans and the periodic summary:
 
 ```bash
-journalctl -u xdp-rate-limit@eth0 -f
+sudo journalctl -u xdp-rate-limit@eth0 -f
 ```
 
 Active bans and the daemon's scan size (number of source IPs in the stats map):
