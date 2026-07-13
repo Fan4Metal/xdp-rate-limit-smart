@@ -59,6 +59,10 @@ Everything is wired together by the systemd template unit
 ([`systemd/xdp-rate-limit@.service`](systemd/xdp-rate-limit@.service)), which calls
 the wrapper ([`src/xdp-rate-limit-wrapper`](src/xdp-rate-limit-wrapper)).
 
+> For a detailed, component-by-component walkthrough of the internals — the XDP
+> packet path, the BPF maps, the loader lifecycle, and the daemon's decision loop —
+> see **[Architecture & mechanism](docs/architecture.md)**.
+
 ## Requirements
 
 - Linux kernel ≥ 4.10 (needed for `LRU_PERCPU_HASH`; any current Ubuntu qualifies).

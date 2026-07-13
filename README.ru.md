@@ -58,6 +58,10 @@ IPv6 в этой версии пропускается без фильтраци
 ([`systemd/xdp-rate-limit@.service`](systemd/xdp-rate-limit@.service)), который
 вызывает обёртку ([`src/xdp-rate-limit-wrapper`](src/xdp-rate-limit-wrapper)).
 
+> Подробный разбор внутренностей по компонентам — путь пакета в XDP, BPF-карты,
+> жизненный цикл загрузчика и цикл решений демона — см. в
+> **[Архитектура и механизм работы](docs/architecture.ru.md)**.
+
 ## Требования
 
 - Ядро Linux ≥ 4.10 (нужно для `LRU_PERCPU_HASH`; любая актуальная Ubuntu подходит).

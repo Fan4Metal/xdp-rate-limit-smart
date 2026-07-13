@@ -38,6 +38,10 @@ sudo bpftool map dump pinned /sys/fs/bpf/xdp-rate-limit/eth0/blacklist_map
 
 ## Architecture
 
+For a full component-by-component walkthrough, see
+[docs/architecture.md](docs/architecture.md) (RU: [docs/architecture.ru.md](docs/architecture.ru.md)).
+The summary below is the fast version.
+
 Fast path (packet decisions) and policy (who to ban) are deliberately split across
 three processes. The five components chain like this:
 
