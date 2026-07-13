@@ -74,6 +74,10 @@ the wrapper ([`src/xdp-rate-limit-wrapper`](src/xdp-rate-limit-wrapper)).
 
 ## Install
 
+> **Note:** commands throughout use `eth0` as a placeholder for your interface —
+> substitute your own (e.g. `ens3`) everywhere, including in the systemd unit name
+> `xdp-rate-limit@<iface>`. Find yours with `ip -br link`.
+
 ```bash
 sudo ./install.sh eth0
 ```
