@@ -39,6 +39,7 @@ BPF_MAP_UPDATE_ELEM = 2
 BPF_MAP_DELETE_ELEM = 3
 BPF_MAP_GET_NEXT_KEY = 4
 BPF_OBJ_GET = 7  # NOTE: 7 is BPF_OBJ_GET; 15 is BPF_OBJ_GET_INFO_BY_FD (do not confuse)
+BPF_MAP_LOOKUP_BATCH = 24  # bulk key+value dump; kernel >= 5.6. Falls back if absent.
 
 BPF_ANY = 0
 
@@ -110,12 +111,39 @@ class BpfAttrObjGet(ctypes.Structure):
     ]
 
 
+class BpfAttrBatch(ctypes.Structure):
+    # Matches the BPF_MAP_*_BATCH slice of union bpf_attr (56 bytes, no padding).
+    _fields_ = [
+        ("in_batch", ctypes.c_uint64),   # cursor in; 0 to start from the beginning
+        ("out_batch", ctypes.c_uint64),  # cursor out; feed back as in_batch next call
+        ("keys", ctypes.c_uint64),
+        ("values", ctypes.c_uint64),
+        ("count", ctypes.c_uint32),      # in: buffer capacity; out: entries filled
+        ("map_fd", ctypes.c_uint32),
+        ("elem_flags", ctypes.c_uint64),
+        ("flags", ctypes.c_uint64),
+    ]
+
+
 def _bpf(cmd: int, attr: ctypes.Structure) -> int:
     ret = LIBC.syscall(SYS_BPF, cmd, ctypes.byref(attr), ctypes.sizeof(attr))
     if ret < 0:
         e = ctypes.get_errno()
         raise OSError(e, os.strerror(e))
     return int(ret)
+
+
+def _bpf_raw(cmd: int, attr: ctypes.Structure) -> Tuple[int, int]:
+    """Like _bpf but returns (ret, errno) instead of raising.
+
+    Needed for BPF_MAP_LOOKUP_BATCH, where the final batch reports ENOENT *and*
+    still fills attr.count valid entries — so the caller must read attr.count
+    even on the "error" that signals end-of-map.
+    """
+    ret = LIBC.syscall(SYS_BPF, cmd, ctypes.byref(attr), ctypes.sizeof(attr))
+    if ret < 0:
+        return int(ret), ctypes.get_errno()
+    return int(ret), 0
 
 
 def _ptr(buf: ctypes.Array) -> int:
@@ -132,6 +160,9 @@ class BpfMap:
         self.value_stride = _round_up8(value_size) if percpu else value_size
         self.buf_size = self.value_stride * (NUM_POSSIBLE_CPUS if percpu else 1)
         self.fd = self.obj_get(self.path)
+        # Optimistically use BPF_MAP_LOOKUP_BATCH; flipped off on the first call
+        # if the running kernel doesn't support it (pre-5.6).
+        self._use_batch = True
 
     @staticmethod
     def obj_get(path: Path) -> int:
@@ -199,10 +230,70 @@ class BpfMap:
                 break
 
     def items(self, max_keys: int = 0) -> Iterator[Tuple[bytes, bytes]]:
+        # One BPF_MAP_LOOKUP_BATCH call returns up to `batch_size` key+value pairs,
+        # versus two syscalls (GET_NEXT_KEY + LOOKUP_ELEM) per entry the naive way.
+        # On a busy stats_map (tens of thousands of source IPs) this is the
+        # difference between a handful of syscalls per tick and ~100k of them.
+        if self._use_batch:
+            try:
+                yield from self._items_batch(max_keys=max_keys)
+                return
+            except OSError as e:
+                # EINVAL/ENOTSUPP => kernel lacks batch ops; degrade permanently.
+                if e.errno in (errno.EINVAL, errno.ENOTSUPP, errno.EOPNOTSUPP):
+                    LOG.warning(
+                        "BPF_MAP_LOOKUP_BATCH unavailable for %s (%s); "
+                        "falling back to per-key iteration",
+                        self.path, os.strerror(e.errno),
+                    )
+                    self._use_batch = False
+                else:
+                    raise
         for key in self.keys(max_keys=max_keys):
             val = self.lookup(key)
             if val is not None:
                 yield key, val
+
+    def _items_batch(self, max_keys: int = 0, batch_size: int = 1024) -> List[Tuple[bytes, bytes]]:
+        # Collect into a list rather than yielding lazily: if the very first call
+        # fails as unsupported we must be able to fall back without having emitted
+        # a partial (duplicated) result. read_rates materializes everything anyway.
+        out: List[Tuple[bytes, bytes]] = []
+        keys_buf = ctypes.create_string_buffer(self.key_size * batch_size)
+        vals_buf = ctypes.create_string_buffer(self.buf_size * batch_size)
+        out_batch = ctypes.create_string_buffer(self.key_size)
+        in_batch: Optional[ctypes.Array] = None
+
+        while True:
+            attr = BpfAttrBatch()
+            attr.in_batch = _ptr(in_batch) if in_batch is not None else 0
+            attr.out_batch = _ptr(out_batch)
+            attr.keys = _ptr(keys_buf)
+            attr.values = _ptr(vals_buf)
+            attr.count = batch_size
+            attr.map_fd = self.fd
+            attr.elem_flags = 0
+            attr.flags = 0
+
+            ret, err = _bpf_raw(BPF_MAP_LOOKUP_BATCH, attr)
+            n = attr.count  # entries actually filled — valid even when ret < 0
+
+            for i in range(n):
+                k = bytes(keys_buf.raw[i * self.key_size:(i + 1) * self.key_size])
+                v = bytes(vals_buf.raw[i * self.buf_size:(i + 1) * self.buf_size])
+                out.append((k, v))
+                if max_keys and len(out) >= max_keys:
+                    return out
+
+            if ret < 0:
+                if err == errno.ENOENT:
+                    return out  # map exhausted; entries above were the last batch
+                raise OSError(err, os.strerror(err))
+            if n == 0:
+                return out  # no progress and no error: nothing left to read
+
+            # Advance the cursor: this batch's out_batch becomes next in_batch.
+            in_batch = ctypes.create_string_buffer(bytes(out_batch.raw), self.key_size)
 
     def close(self) -> None:
         try:
