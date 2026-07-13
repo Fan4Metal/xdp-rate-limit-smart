@@ -16,6 +16,7 @@ IPv6 is passed through without filtering in this version — see
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Update](#update)
 - [Configuration](#configuration)
 - [Smart mode](#smart-mode)
 - [Direct per-IP limit](#direct-per-ip-limit)
@@ -88,6 +89,39 @@ The installer copies a default [`etc/config.json`](etc/config.json) to
 `/etc/xdp-rate-limit/config.json` and, if it detects your current SSH client,
 adds that IP to the whitelist automatically. Always double-check the whitelist —
 see [Important notes](#important-notes).
+
+## Update
+
+To upgrade an existing install to a newer version, pull the new sources and re-run
+the installer with your interface. `install.sh` recompiles the BPF object and the
+loader, reinstalls the daemon, wrapper and systemd unit, and **keeps your existing
+`/etc/xdp-rate-limit/config.json`** untouched. A restart is required to load the
+new binaries — re-running the installer does not restart a service that is already
+running:
+
+```bash
+cd xdp-rate-limit-smart
+git pull
+sudo ./install.sh eth0
+sudo systemctl restart xdp-rate-limit@eth0
+```
+
+Then confirm it came back up cleanly and check the log — `NRestarts` should not be
+climbing (see [Status & diagnostics](#status--diagnostics)):
+
+```bash
+systemctl status xdp-rate-limit@eth0
+journalctl -u xdp-rate-limit@eth0 -n 20 --no-pager
+```
+
+The restart re-attaches XDP and reloads the still-active bans, so it is safe to run
+on a live server. If you changed only the Python daemon and want to skip the
+recompile, you can reinstall just that file instead of the full installer:
+
+```bash
+sudo install -m0755 src/xdp_rate_daemon.py /usr/local/sbin/xdp-rate-daemon
+sudo systemctl restart xdp-rate-limit@eth0
+```
 
 ## Configuration
 
