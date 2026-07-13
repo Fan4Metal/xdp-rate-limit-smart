@@ -409,7 +409,9 @@ class XdpRateDaemon:
         self.config_mtime = st.st_mtime
         self.sync_whitelist()
         LOG.info(
-            "Config loaded: global %.3f Mbps / %.0f pps, smart IP >= %.3f Mbps / %.0f pps, direct IP %.3f Mbps / %.0f pps, ban %ss",
+            "Config loaded: interval %.2fs, smart=%s, global %.3f Mbps / %.0f pps, smart IP >= %.3f Mbps / %.0f pps, direct IP %.3f Mbps / %.0f pps, ban %ss",
+            self.config.interval_seconds,
+            "on" if self.config.smart_global_enabled else "off",
             self.config.global_mbps_limit,
             self.config.global_pps_limit,
             self.config.smart_ban_min_mbps,
