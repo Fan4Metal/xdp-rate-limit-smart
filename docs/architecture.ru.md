@@ -24,33 +24,44 @@
 
 ## Схема в одной картинке
 
-```
-                        входящие пакеты
-                             │
-        ┌────────────────────▼─────────────────────┐
-        │  DATA PLANE  (ядро, на каждый пакет)      │
-        │  src/xdp_rate_limit.bpf.c → xdp_rate_limiter
-        │                                           │
-        │   в whitelist? ─да→ PASS (без учёта)      │
-        │   в blacklist и не истёк? ─да→ DROP       │
-        │   иначе: учесть (global + per-source), PASS
-        └───────┬───────────────────────────┬───────┘
-                │ закреплённые карты (bpffs) │
-   stats_map ───┤  global_stats_map ─────────┤─── blacklist_map ── whitelist_lpm_map
-    (чтение)    │     (чтение)               │      (запись)         (запись)
-                ▼                            ▼
-        ┌───────────────────────────────────────────┐
-        │  CONTROL PLANE  (userspace, раз в ~1 с)    │
-        │  src/xdp_rate_daemon.py                    │
-        │                                            │
-        │   читаем счётчики → дельты → Mbps/PPS      │
-        │   решаем, кого банить (2 правила)          │
-        │   пишем/чистим записи в blacklist_map      │
-        └────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    pkt(["входящие пакеты"]) --> DP
 
-   Загрузка/attach/pin:   src/xdp_loader.c   (load | unload)
-   Связка воедино:        systemd + src/xdp-rate-limit-wrapper
+    subgraph DP["DATA PLANE · ядро, на каждый пакет — xdp_rate_limiter"]
+        direction TB
+        wl{"в whitelist?"}
+        wl -->|да| pass1(["PASS · без учёта"])
+        wl -->|нет| bl{"в blacklist и не истёк?"}
+        bl -->|да| drop(["DROP"])
+        bl -->|нет| cnt["учесть: global + per-source"] --> pass2(["PASS"])
+    end
+
+    subgraph MAPS["закреплённые карты · bpffs"]
+        direction LR
+        stats[("stats_map")]
+        gstats[("global_stats_map")]
+        black[("blacklist_map")]
+        white[("whitelist_lpm_map")]
+    end
+
+    subgraph CP["CONTROL PLANE · userspace, раз в ~1 с — xdp_rate_daemon.py"]
+        direction TB
+        rd["читаем счётчики → дельты → Mbps/PPS"] --> dec["решаем, кого банить · 2 правила"] --> wr["пишем/чистим записи в blacklist_map"]
+    end
+
+    DP -- "запись" --> stats
+    DP -- "запись" --> gstats
+    white -- "чтение" --> DP
+    black -- "чтение" --> DP
+    stats -- "чтение" --> CP
+    gstats -- "чтение" --> CP
+    CP -- "запись бана" --> black
+    CP -- "загрузка из конфига" --> white
 ```
+
+Загрузка/attach/pin — `src/xdp_loader.c` (`load | unload`); связка воедино —
+systemd + `src/xdp-rate-limit-wrapper`.
 
 Программа в ядре — это **data plane** (плоскость данных): она выполняется на
 каждом пакете и потому должна быть крошечной и быстрой, поэтому только *считает* и

@@ -23,33 +23,44 @@ for the terse contributor summary see [CLAUDE.md](../CLAUDE.md).
 
 ## Design in one picture
 
-```
-                         packets in
-                             │
-        ┌────────────────────▼─────────────────────┐
-        │  DATA PLANE  (kernel, per packet)         │
-        │  src/xdp_rate_limit.bpf.c → xdp_rate_limiter
-        │                                           │
-        │   whitelist? ─yes→ PASS (no accounting)   │
-        │   blacklist & not expired? ─yes→ DROP     │
-        │   else: count (global + per-source), PASS │
-        └───────┬───────────────────────────┬───────┘
-                │ pinned maps (bpffs)        │
-   stats_map ───┤  global_stats_map ─────────┤─── blacklist_map ── whitelist_lpm_map
-      (reads)   │      (reads)               │      (writes)         (writes)
-                ▼                            ▼
-        ┌───────────────────────────────────────────┐
-        │  CONTROL PLANE  (userspace, every ~1 s)    │
-        │  src/xdp_rate_daemon.py                    │
-        │                                            │
-        │   read counters → deltas → Mbps/PPS        │
-        │   decide who to ban (2 rules)              │
-        │   write/expire entries in blacklist_map    │
-        └────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    pkt(["packets in"]) --> DP
 
-   Loaded/attached/pinned by:  src/xdp_loader.c   (load | unload)
-   Wired together by:          systemd + src/xdp-rate-limit-wrapper
+    subgraph DP["DATA PLANE · kernel, per packet — xdp_rate_limiter"]
+        direction TB
+        wl{"in whitelist?"}
+        wl -->|yes| pass1(["PASS · no accounting"])
+        wl -->|no| bl{"in blacklist & not expired?"}
+        bl -->|yes| drop(["DROP"])
+        bl -->|no| cnt["count: global + per-source"] --> pass2(["PASS"])
+    end
+
+    subgraph MAPS["pinned maps · bpffs"]
+        direction LR
+        stats[("stats_map")]
+        gstats[("global_stats_map")]
+        black[("blacklist_map")]
+        white[("whitelist_lpm_map")]
+    end
+
+    subgraph CP["CONTROL PLANE · userspace, every ~1 s — xdp_rate_daemon.py"]
+        direction TB
+        rd["read counters → deltas → Mbps/PPS"] --> dec["decide who to ban · 2 rules"] --> wr["write/expire entries in blacklist_map"]
+    end
+
+    DP -- "writes" --> stats
+    DP -- "writes" --> gstats
+    white -- "reads" --> DP
+    black -- "reads" --> DP
+    stats -- "reads" --> CP
+    gstats -- "reads" --> CP
+    CP -- "ban writes" --> black
+    CP -- "loads from config" --> white
 ```
+
+Loaded/attached/pinned by `src/xdp_loader.c` (`load | unload`); wired together by
+systemd + `src/xdp-rate-limit-wrapper`.
 
 The kernel program is the **data plane**: it runs on every packet and must be
 tiny and fast, so it only *counts* and *drops*. The Python program is the
