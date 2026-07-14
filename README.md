@@ -318,8 +318,36 @@ BAN 1.2.3.4 for 300s: 3.214 Mbps, 4200 pps, reason=smart-global
 Periodic summary:
 
 ```text
-iface=eth0 global=7.531Mbps/12000pps smart_exceeded=True active_bans=2 top=[1.2.3.4=3.21Mbps/4200pps]
+global=7.531Mbps/12000pps smart_exceeded=True active_bans=2 top=[1.2.3.4=3.21Mbps/4200pps]
 ```
+
+Under systemd the interface and the timestamp come from the journal prefix
+(`Jul 14 15:01:54 host xdp-rate-limit@eth0[3428]: INFO ...`), so the daemon does not
+repeat them. Run by hand outside systemd, it prints its own timestamp.
+
+### Summary frequency
+
+The summary is written every `summary_log_interval_seconds` (default 10) while
+something is going on, and only every `idle_summary_log_interval_seconds`
+(default 300) while the limiter is **idle** — nothing banned, nobody above a
+per-source gate, and the global gate not crossed. This keeps a quiet server from
+filling the journal with identical lines.
+
+| Key | Meaning |
+| --- | --- |
+| `summary_log_interval_seconds` | Summary interval while active. `0` = every tick. |
+| `idle_summary_log_interval_seconds` | Summary interval while idle. `0` disables slow mode — always use the active interval. |
+| `log_top_n` | How many top sources to list in `top=[...]`. |
+
+Slow mode never delays an event: as soon as a ban happens or the global gate is
+crossed, the daemon reverts to the active interval and logs on that very tick.
+`BAN`/`UNBAN` lines are separate and are never rate-limited.
+
+Slow mode is **ignored under `dry_run`**, which exists to watch the numbers while
+you pick thresholds — and until those are set the limiter is idle by definition,
+so slow mode would starve you of exactly the data you are collecting. Note also
+that with `smart_global_enabled: false` the global gate is never evaluated, so
+"idle" then means only "no per-IP candidates and no active bans".
 
 ## Status & diagnostics
 

@@ -335,6 +335,10 @@ class Config:
     max_scan_entries: int = 262144
     log_top_n: int = 10
     summary_log_interval_seconds: int = 10
+    # Slow mode: while the limiter is idle (nothing banned, global gate not crossed)
+    # the summary is logged this rarely instead. 0 disables it — always use
+    # summary_log_interval_seconds. Ignored under dry_run.
+    idle_summary_log_interval_seconds: int = 300
     whitelist: Tuple[str, ...] = ("127.0.0.1",)
     dry_run: bool = False
 
@@ -355,6 +359,10 @@ class Config:
             raise ValueError("ban_seconds must be >= 0")
         if c.max_bans_per_tick < 1:
             raise ValueError("max_bans_per_tick must be >= 1")
+        if c.summary_log_interval_seconds < 0:
+            raise ValueError("summary_log_interval_seconds must be >= 0")
+        if c.idle_summary_log_interval_seconds < 0:
+            raise ValueError("idle_summary_log_interval_seconds must be >= 0")
         return c
 
 
@@ -408,8 +416,15 @@ class XdpRateDaemon:
         self.config = Config.from_json(self.config_path)
         self.config_mtime = st.st_mtime
         self.sync_whitelist()
+        idle_every = self.config.idle_summary_log_interval_seconds
+        if self.config.dry_run:
+            idle_desc = "off, dry-run"
+        elif idle_every > 0:
+            idle_desc = f"{idle_every}s"
+        else:
+            idle_desc = "off"
         LOG.info(
-            "Config loaded: interval %.2fs, smart=%s, global %.3f Mbps / %.0f pps, smart IP >= %.3f Mbps / %.0f pps, direct IP %.3f Mbps / %.0f pps, ban %ss",
+            "Config loaded: interval %.2fs, smart=%s, global %.3f Mbps / %.0f pps, smart IP >= %.3f Mbps / %.0f pps, direct IP %.3f Mbps / %.0f pps, ban %ss, summary %ss (idle %s)",
             self.config.interval_seconds,
             "on" if self.config.smart_global_enabled else "off",
             self.config.global_mbps_limit,
@@ -419,6 +434,8 @@ class XdpRateDaemon:
             self.config.per_ip_mbps_limit,
             self.config.per_ip_pps_limit,
             self.config.ban_seconds,
+            self.config.summary_log_interval_seconds,
+            idle_desc,
         )
 
     @staticmethod
@@ -595,12 +612,24 @@ class XdpRateDaemon:
             if self.ban(r, reason, now_ns):
                 bans_done += 1
 
-        if now_ns - self.last_summary_ns >= self.config.summary_log_interval_seconds * 1_000_000_000:
+        # Idle = the limiter has nothing to do: nobody banned, nobody worth banning,
+        # global gate not crossed. The moment any of that changes we fall back to the
+        # normal interval, and since the last summary is then long overdue, the first
+        # tick of an event logs immediately.
+        # dry_run opts out: it exists to watch the numbers while picking thresholds,
+        # and until those are set the limiter is idle by definition.
+        idle = not global_exceeded and not candidates and not self.known_bans
+        slow_mode = self.config.idle_summary_log_interval_seconds > 0 and not self.config.dry_run
+        summary_interval = self.config.summary_log_interval_seconds
+        if idle and slow_mode:
+            summary_interval = self.config.idle_summary_log_interval_seconds
+
+        if now_ns - self.last_summary_ns >= summary_interval * 1_000_000_000:
             self.last_summary_ns = now_ns
             top = ", ".join(f"{r.ip}={r.mbps:.2f}Mbps/{r.pps:.0f}pps" for r in rates[: self.config.log_top_n])
+            # The iface is in the syslog identifier (xdp-rate-limit@<iface>), not repeated here.
             LOG.info(
-                "iface=%s global=%.3fMbps/%.0fpps smart_exceeded=%s active_bans=%d top=[%s]",
-                self.iface,
+                "global=%.3fMbps/%.0fpps smart_exceeded=%s active_bans=%d top=[%s]",
                 global_mbps,
                 global_pps,
                 global_exceeded,
@@ -622,9 +651,25 @@ class XdpRateDaemon:
         self.stop = True
 
 
+def under_journald() -> bool:
+    # systemd sets JOURNAL_STREAM to "<dev>:<ino>" of the stream it handed us;
+    # it only means "journald owns our log" if stderr is that same stream.
+    spec = os.environ.get("JOURNAL_STREAM")
+    if not spec:
+        return False
+    try:
+        dev, ino = spec.split(":", 1)
+        st = os.fstat(sys.stderr.fileno())
+        return st.st_dev == int(dev) and st.st_ino == int(ino)
+    except (ValueError, OSError):
+        return False
+
+
 def configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+    # journald timestamps every line itself, so asctime would print the time twice.
+    fmt = "%(levelname)s %(message)s" if under_journald() else "%(asctime)s %(levelname)s %(message)s"
+    logging.basicConfig(level=level, format=fmt)
 
 
 def parse_args() -> argparse.Namespace:

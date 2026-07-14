@@ -229,7 +229,10 @@ tick():
           если r выше smart_ban_min_*: candidates.setdefault(r, "smart-global")
   for r из candidates по убыванию скорости, не более max_bans_per_tick:
       ban(r)
-  раз в summary_log_interval_seconds: залогировать одну сводную строку
+  idle = нет candidates, нет активных банов, глобальный гейт не перейдён
+  раз в summary_log_interval_seconds
+        (idle_summary_log_interval_seconds если idle и не dry_run):
+      залогировать одну сводную строку
 ```
 
 Порог метрики, равный `0`, означает **выключено**: помощник `over(value, limit)`

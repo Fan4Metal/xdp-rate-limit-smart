@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=XDP_MODE=auto
+# Puts the interface in the journal prefix, so log lines don't have to repeat it.
+SyslogIdentifier=xdp-rate-limit@%i
 ExecStart=/usr/local/sbin/xdp-rate-limit-wrapper %i start
 ExecStop=/bin/kill -TERM $MAINPID
 ExecStopPost=/usr/local/sbin/xdp-rate-limit-wrapper %i stop

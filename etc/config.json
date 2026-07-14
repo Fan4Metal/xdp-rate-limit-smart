@@ -17,6 +17,7 @@
   "max_scan_entries": 262144,
   "log_top_n": 10,
   "summary_log_interval_seconds": 10,
+  "idle_summary_log_interval_seconds": 300,
 
   "whitelist": [
     "127.0.0.1"

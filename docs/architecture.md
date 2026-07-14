@@ -224,7 +224,10 @@ tick():
           if r over smart_ban_min_*: candidates.setdefault(r, "smart-global")
   for r in candidates sorted by rate desc, up to max_bans_per_tick:
       ban(r)
-  every summary_log_interval_seconds: log one summary line
+  idle = no candidates and no active bans and global gate not crossed
+  every summary_log_interval_seconds
+        (idle_summary_log_interval_seconds if idle and not dry_run):
+      log one summary line
 ```
 
 A metric threshold of `0` means **disabled**: the helper `over(value, limit)`
