@@ -351,6 +351,19 @@ that with `smart_global_enabled: false` the global gate is never evaluated, so
 
 ## Status & diagnostics
 
+> **`bpftool` is required for the map/attachment inspection below** and is not
+> installed by [`install.sh`](install.sh) (the runtime does not need it — the
+> daemon talks to the maps through raw `bpf(2)` syscalls). Install it separately:
+>
+> ```bash
+> sudo apt install -y bpftool
+> # older releases without a standalone package:
+> sudo apt install -y linux-tools-common linux-tools-$(uname -r)
+> ```
+>
+> On VPS/cloud kernels `linux-tools-$(uname -r)` may not match the running kernel;
+> prefer the standalone `bpftool` package there. Verify with `bpftool version`.
+
 Service state. Watch that `NRestarts` **does not grow** — a rising counter means a
 restart loop (the service crashes and systemd brings it back up):
 
